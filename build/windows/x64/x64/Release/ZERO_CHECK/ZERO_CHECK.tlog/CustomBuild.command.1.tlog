@@ -1,0 +1,10 @@
+^C:\USERS\ABCD\ONEDRIVE\DESKTOP\FITNESSAPP\BUILD\WINDOWS\X64\CMAKEFILES\2E564C4FA716DB8CF42DB6AAF2B51919\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SC:/Users/abcd/OneDrive/Desktop/fitnessapp/windows -BC:/Users/abcd/OneDrive/Desktop/fitnessapp/build/windows/x64 --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/abcd/OneDrive/Desktop/fitnessapp/build/windows/x64/fitnessapp.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -1,0 +1,1 @@
+ C:\\Users\\abcd\\OneDrive\\Desktop\\fitnessapp\\.dart_tool\\flutter_build\\c49617581f5d6b56b1ceebadb2a0d970\\native_assets.yaml: 
