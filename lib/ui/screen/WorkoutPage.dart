@@ -3,6 +3,7 @@ import 'ar_workout_page.dart';
 import 'standard_workout_page.dart';
 
 class WorkoutPage extends StatefulWidget {
+  final String workoutType;
   const WorkoutPage({Key? key}) : super(key: key);
 
   @override
