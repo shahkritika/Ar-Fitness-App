@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:fitness_app/firebase_options.dart';
-import 'package:firebase_core/firebase_core.dart';
 
 class SignupPage extends StatefulWidget {
   @override
@@ -12,13 +10,18 @@ class _SignupPageState extends State<SignupPage> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
-  bool _isLoading = false; // For showing a loading indicator
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _agreeToTerms = false;
 
-  // Firebase Auth instance
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Function to handle signup
   Future<void> _signup() async {
+    if (!_agreeToTerms) {
+      _showSnackBar("Please agree to the Terms & Conditions", Colors.red);
+      return;
+    }
+
     String username = _usernameController.text.trim();
     String password = _passwordController.text.trim();
     String email = _emailController.text.trim();
@@ -28,50 +31,61 @@ class _SignupPageState extends State<SignupPage> {
       return;
     }
 
-    setState(() => _isLoading = true); // Show loading
+    setState(() => _isLoading = true);
 
     try {
-      // Create a new user with email and password in Firebase
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
+      await userCredential.user?.updateDisplayName(username);
 
-      // User successfully registered
-      setState(() => _isLoading = false); // Hide loading
       _showSnackBar("Signup successful!", Colors.green);
-
-      // Optionally, you can set the username in Firebase (this step is optional and depends on your app's requirement)
-      User? user = userCredential.user;
-      if (user != null) {
-        // You can set displayName or save additional user info to Firestore if required.
-        await user.updateDisplayName(username);
-      }
-
-      // Navigate to login page after successful signup
       Navigator.pushReplacementNamed(context, '/login');
     } on FirebaseAuthException catch (e) {
-      setState(() => _isLoading = false); // Hide loading
-      if (e.code == 'weak-password') {
-        _showSnackBar("The password is too weak.", Colors.red);
-      } else if (e.code == 'email-already-in-use') {
-        _showSnackBar("The email is already in use.", Colors.red);
-      } else {
-        _showSnackBar("Signup failed: ${e.message}", Colors.red);
-      }
-    } catch (e) {
-      setState(() => _isLoading = false); // Hide loading
-      _showSnackBar("Error: $e", Colors.red);
+      _showSnackBar(e.message ?? "Signup failed", Colors.red);
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
-  // Function to show snack bar messages
   void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        duration: Duration(seconds: 2),
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: color,
+    ));
+  }
+
+  Widget _buildInputField({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    bool obscureText = false,
+    Widget? suffixIcon,
+  }) {
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(40),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.deepPurpleAccent.withOpacity(0.1),
+            blurRadius: 20,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        obscureText: obscureText,
+        decoration: InputDecoration(
+          icon: Icon(icon, color: Color(0xFF7C4DFF)),
+          hintText: hint,
+          border: InputBorder.none,
+          suffixIcon: suffixIcon,
+        ),
       ),
     );
   }
@@ -79,104 +93,144 @@ class _SignupPageState extends State<SignupPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black, // Dark theme
-      appBar: AppBar(
-        title: Text("Signup"),
-        backgroundColor: const Color(0xFF2E1A5F), // Dark purple
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              "Create Your Account",
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFFB39DDB), // Light purple
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF6A1B9A),
+              Color(0xFF7C4DFF),
+              Color(0xFF9575CD),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Container(
+              margin: EdgeInsets.symmetric(horizontal: 30, vertical: 40),
+              padding: EdgeInsets.all(30),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.deepPurple.withOpacity(0.3),
+                    blurRadius: 30,
+                    offset: Offset(0, 15),
+                  ),
+                ],
               ),
-            ),
-            SizedBox(height: 20),
-            TextField(
-              controller: _usernameController,
-              style: TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Username',
-                labelStyle: TextStyle(color: const Color(0xFFB39DDB)),
-                border: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-              ),
-            ),
-            SizedBox(height: 10),
-            TextField(
-              controller: _emailController,
-              style: TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Email',
-                labelStyle: TextStyle(color: const Color(0xFFB39DDB)),
-                border: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-              ),
-            ),
-            SizedBox(height: 10),
-            TextField(
-              controller: _passwordController,
-              obscureText: true,
-              style: TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Password',
-                labelStyle: TextStyle(color: const Color(0xFFB39DDB)),
-                border: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: const Color(0xFFB39DDB)),
-                ),
-              ),
-            ),
-            SizedBox(height: 20),
-            _isLoading
-                ? CircularProgressIndicator(color: const Color(0xFFB39DDB))
-                : ElevatedButton(
-                    onPressed: _signup,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFB39DDB),
-                      padding: EdgeInsets.symmetric(vertical: 15, horizontal: 30),
-                      textStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    child: Text(
-                      "Sign Up",
-                      style: TextStyle(color: Colors.black),
+              child: Column(
+                children: [
+                  Text(
+                    "Sign Up",
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
                     ),
                   ),
-            TextButton(
-              onPressed: () {
-                Navigator.pushNamed(context, '/login');
-              },
-              child: Text(
-                "Already have an account? Login here",
-                style: TextStyle(color: const Color(0xFFB39DDB)),
+                  SizedBox(height: 30),
+                  _buildInputField(
+                    controller: _usernameController,
+                    hint: "Name",
+                    icon: Icons.person,
+                  ),
+                  _buildInputField(
+                    controller: _emailController,
+                    hint: "E-mail",
+                    icon: Icons.email,
+                  ),
+                  _buildInputField(
+                    controller: _passwordController,
+                    hint: "Password",
+                    icon: Icons.lock,
+                    obscureText: _obscurePassword,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        color: Color(0xFF7C4DFF),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _agreeToTerms,
+                        activeColor: Color(0xFF7C4DFF),
+                        onChanged: (value) {
+                          setState(() {
+                            _agreeToTerms = value ?? false;
+                          });
+                        },
+                      ),
+                      Flexible(
+                        child: Text.rich(
+                          TextSpan(
+                            text: 'I read and agree to ',
+                            style: TextStyle(fontSize: 14),
+                            children: [
+                              TextSpan(
+                                text: 'Terms & Conditions',
+                                style: TextStyle(
+                                  color: Color(0xFF7C4DFF),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 10),
+                  _isLoading
+                      ? CircularProgressIndicator()
+                      : Container(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _signup,
+                            style: ElevatedButton.styleFrom(
+                              padding: EdgeInsets.symmetric(vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                              backgroundColor: Color(0xFF7C4DFF),
+                              elevation: 10,
+                            ),
+                            child: Text(
+                              "CREATE ACCOUNT",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                  SizedBox(height: 20),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pushNamed(context, '/login');
+                    },
+                    child: Text(
+                      "Already have an account? Sign in",
+                      style: TextStyle(
+                        color: Color(0xFF7C4DFF),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
