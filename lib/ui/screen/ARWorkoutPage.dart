@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:fitness_app/widgets/landmark_painter.dart';
-import 'package:fitness_app/widgets/workout_summary.dart';
+import 'package:fitness_app/utils/exercise_analyzer.dart';
 
 class ARWorkoutPage extends StatefulWidget {
   final String workoutType;
@@ -29,6 +29,10 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
 
   Pose? _pose;
   late final PoseDetector _poseDetector;
+
+  final ExerciseAnalyzer _exerciseAnalyzer = ExerciseAnalyzer();
+  String feedback = 'Start exercising';
+  int _reps = 0;
 
   Timer? _timer;
   int _secondsElapsed = 0;
@@ -105,9 +109,18 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
       final poses = await _poseDetector.processImage(inputImage);
 
       if (poses.isNotEmpty) {
-        setState(() => _pose = poses.first);
+        final pose = poses.first;
+        final result = _exerciseAnalyzer.analyzePose(pose, widget.workoutType);
+        setState(() {
+          _pose = pose;
+          feedback = result;
+          _reps = _exerciseAnalyzer.reps;
+        });
       } else {
-        setState(() => _pose = null);
+        setState(() {
+          _pose = null;
+          feedback = 'No person detected';
+        });
       }
     } catch (e) {
       debugPrint("Pose detection error: $e");
@@ -118,17 +131,7 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
 
   void _endWorkout() {
     _timer?.cancel();
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => WorkoutSummary(
-          duration: _secondsElapsed,
-          workoutType: widget.workoutType,
-          reps: 0, // Replace with actual repetition counter later
-          onOk: () => Navigator.pop(context),
-        ),
-      ),
-    );
+    Navigator.pop(context);
   }
 
   @override
@@ -160,7 +163,6 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
           ? Stack(
               fit: StackFit.expand,
               children: [
-                // Fullscreen Camera Preview
                 OverflowBox(
                   alignment: Alignment.center,
                   child: FittedBox(
@@ -173,14 +175,17 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
                   ),
                 ),
 
-                // Pose Landmark Overlay
                 if (_pose != null)
                   CustomPaint(
-                    painter: LandmarkPainter(_pose),
+                    painter: LandmarkPainter(
+                      _pose,
+                      Size(_cameraController.value.previewSize!.height, _cameraController.value.previewSize!.width),
+                      MediaQuery.of(context).size,
+                      _isFrontCamera,
+                    ),
                     size: Size.infinite,
                   ),
 
-                // Workout Info
                 Positioned(
                   top: 40,
                   left: 20,
@@ -195,11 +200,19 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
                         'Time: $_secondsElapsed s',
                         style: const TextStyle(fontSize: 16, color: Colors.white),
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Feedback: $feedback',
+                        style: const TextStyle(fontSize: 16, color: Colors.greenAccent),
+                      ),
+                      Text(
+                        'Reps: $_reps',
+                        style: const TextStyle(fontSize: 16, color: Colors.white),
+                      ),
                     ],
                   ),
                 ),
 
-                // Toggle Camera Button
                 Positioned(
                   bottom: 40,
                   left: 20,
@@ -209,7 +222,6 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> {
                   ),
                 ),
 
-                // End Workout Button
                 Positioned(
                   bottom: 40,
                   right: 20,
