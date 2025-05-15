@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'dart:async';
 
 class StandardWorkoutPage extends StatefulWidget {
   final String workoutType;
@@ -14,12 +15,15 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
   late List<Map<String, String>> _exercises;
   late Stopwatch _stopwatch;
   VideoPlayerController? _videoController;
+  bool _isWorkoutStarted = false;
+  int _countdownSeconds = 5;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
     _loadExercises();
-    _stopwatch = Stopwatch()..start();
+    _stopwatch = Stopwatch();
     _loadVideo();
   }
 
@@ -41,31 +45,34 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Stand tall with feet together.\n2. Shift your weight onto your left foot and place your right foot on your inner left thigh.\n3. Bring your hands together at your chest or extend them overhead.\n4. Hold and focus on your balance.",
             "video": "assets/videos/treepose.mp4"
           },
-           {
-            "name": "Warrior II", "duration": "30 sec",
+          {
+            "name": "Warrior II",
+            "duration": "30 sec",
             "desc": "Increases stamina and endurance, strengthens legs and shoulders.",
-            "instructions": "1. Start in a standing position and step your right foot back.\n2. Bend your front knee while keeping your back leg straight.\n3. Extend your arms parallel to the floor, looking forward.\n4. Hold the pose and switch sides.",
+            "steps": "1. Start in a standing position and step your right foot back.\n2. Bend your front knee while keeping your back leg straight.\n3. Extend your arms parallel to the floor, looking forward.\n4. Hold the pose and switch sides.",
             "video": "assets/videos/warrior_ii.mp4"
           },
           {
-            "name": "Child's Pose", "duration": "30 sec",
+            "name": "Child's Pose",
+            "duration": "30 sec",
             "desc": "Relaxes back and shoulders, improves flexibility.",
-            "instructions": "1. Start on your hands and knees.\n2. Sit your hips back onto your heels while reaching your arms forward.\n3. Rest your forehead on the mat and breathe deeply.\n4. Hold the pose and relax.",
+            "steps": "1. Start on your hands and knees.\n2. Sit your hips back onto your heels while reaching your arms forward.\n3. Rest your forehead on the mat and breathe deeply.\n4. Hold the pose and relax.",
             "video": "assets/videos/child_pose.mp4"
           },
           {
-            "name": "Bridge Pose", "duration": "30 sec",
+            "name": "Bridge Pose",
+            "duration": "30 sec",
             "desc": "Strengthens glutes, spine, and opens chest.",
-            "instructions": "1. Lie on your back with your knees bent and feet hip-width apart.\n2. Press into your feet and lift your hips toward the ceiling.\n3. Keep your arms on the floor or clasp them beneath you.\n4. Hold the pose while engaging your glutes and core.",
+            "steps": "1. Lie on your back with your knees bent and feet hip-width apart.\n2. Press into your feet and lift your hips toward the ceiling.\n3. Keep your arms on the floor or clasp them beneath you.\n4. Hold the pose while engaging your glutes and core.",
             "video": "assets/videos/bridge_pose.mp4"
           },
           {
-            "name": "Seated Forward Bend", "duration": "30 sec",
+            "name": "Seated Forward Bend",
+            "duration": "30 sec",
             "desc": "Stretches spine, hamstrings, and calves.",
-            "instructions": "1. Sit with your legs extended in front of you.\n2. Reach forward, hinging from your hips.\n3. Try to grab your feet or shins while keeping your back straight.\n4. Hold the stretch and breathe deeply.",
+            "steps": "1. Sit with your legs extended in front of you.\n2. Reach forward, hinging from your hips.\n3. Try to grab your feet or shins while keeping your back straight.\n4. Hold the stretch and breathe deeply.",
             "video": "assets/videos/seated_forward_bend.mp4"
           }
-
         ];
         break;
 
@@ -78,7 +85,7 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Stand with feet shoulder-width apart.\n2. Drop into a squat position and place your hands on the floor.\n3. Kick your feet back into a push-up position.\n4. Perform a push-up.\n5. Jump your feet back to the squat position.\n6. Explode into a jump with your arms overhead.",
             "video": "assets/videos/burpees.mp4"
           },
-            {
+          {
             "name": "High Knees",
             "duration": "30 sec",
             "desc": "Boosts heart rate, strengthens legs and core.",
@@ -113,7 +120,6 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Start in a plank position with forearms on the floor.\n2. Push up onto one hand, followed by the other.\n3. Lower back down to forearm plank.\n4. Keep your body aligned and core tight.",
             "video": "assets/videos/plank_pushup.mp4"
           }
-
         ];
         break;
 
@@ -126,7 +132,7 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Stand upright with feet together and hands by your sides.\n2. Jump while spreading your legs and raising your arms above your head.\n3. Jump again to return to the starting position.\n4. Repeat quickly.",
             "video": "assets/videos/jumpingjacks.mp4"
           },
-           {
+          {
             "name": "Mountain Climbers",
             "duration": "40 sec",
             "desc": "Core and agility exercise, great for endurance.",
@@ -161,7 +167,6 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Hold a jump rope with handles in both hands.\n2. Swing the rope over your head and jump as it passes under your feet.\n3. Keep a steady rhythm and land softly.\n4. Continue for the set duration.",
             "video": "assets/videos/jumprope.mp4"
           }
-
         ];
         break;
 
@@ -174,7 +179,7 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Stand with feet shoulder-width apart.\n2. Lower your hips back and down as if sitting in a chair.\n3. Keep your chest upright and knees behind your toes.\n4. Push through your heels to return to standing position.",
             "video": "assets/videos/squat.mp4"
           },
-           {
+          {
             "name": "Push-ups",
             "reps": "12 reps",
             "desc": "Strengthens chest, arms, and shoulders.",
@@ -209,7 +214,6 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             "steps": "1. Start in a forearm plank position with elbows under shoulders.\n2. Keep your body in a straight line from head to heels.\n3. Engage your core and hold the position.\n4. Avoid dropping your hips or raising your butt.",
             "video": "assets/videos/plank.mp4"
           }
-
         ];
         break;
 
@@ -219,25 +223,55 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
   }
 
   void _loadVideo() {
-    _videoController?.dispose(); // Dispose previous video if any
+    _videoController?.dispose();
 
     String? videoPath = _exercises[_exerciseIndex]["video"];
     if (videoPath != null) {
       _videoController = VideoPlayerController.asset(videoPath)
         ..initialize().then((_) {
           setState(() {});
-          _videoController!.play();
-          _videoController!.setLooping(true);
+          if (_isWorkoutStarted) {
+            _videoController!.play();
+            _videoController!.setLooping(true);
+          }
+        }).catchError((error) {
+          print('Video initialization error: $error');
         });
     } else {
       _videoController = null;
     }
   }
 
+  void _startWorkout() {
+    setState(() {
+      _countdownSeconds = 5;
+      _isWorkoutStarted = false;
+    });
+
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        if (_countdownSeconds > 0) {
+          _countdownSeconds--;
+        } else {
+          _isWorkoutStarted = true;
+          _stopwatch.start();
+          if (_videoController != null && _videoController!.value.isInitialized) {
+            _videoController!.play();
+            _videoController!.setLooping(true);
+          }
+          timer.cancel();
+        }
+      });
+    });
+  }
+
   void _nextExercise() {
     if (_exerciseIndex < _exercises.length - 1) {
       setState(() {
         _exerciseIndex++;
+        _isWorkoutStarted = false;
+        _countdownSeconds = 5;
         _loadVideo();
       });
     } else {
@@ -265,16 +299,20 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
   @override
   void dispose() {
     _videoController?.dispose();
+    _countdownTimer?.cancel();
+    _stopwatch.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final currentExercise = _exercises[_exerciseIndex];
     return Scaffold(
       appBar: AppBar(title: Text(widget.workoutType)),
       body: Padding(
         padding: const EdgeInsets.all(10.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Timer & Progress
             Row(
@@ -292,8 +330,26 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
             ),
             const SizedBox(height: 20),
 
-            // Exercise Video Section
-            if (_videoController != null && _videoController!.value.isInitialized)
+            // Countdown or Video Section
+            if (!_isWorkoutStarted && _countdownSeconds > 0)
+              Container(
+                height: 200,
+                width: double.infinity,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  _countdownSeconds == 5 ? 'Get Ready!' : '$_countdownSeconds',
+                  style: const TextStyle(
+                    fontSize: 48,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              )
+            else if (_videoController != null && _videoController!.value.isInitialized)
               SizedBox(
                 height: 200,
                 width: double.infinity,
@@ -312,47 +368,80 @@ class _StandardWorkoutPageState extends State<StandardWorkoutPage> {
 
             const SizedBox(height: 20),
 
-            // Exercise Details
-            Expanded(
-              child: ListView.builder(
-                itemCount: _exercises.length,
-                itemBuilder: (context, index) {
-                  final exercise = _exercises[index];
-                  return Card(
-                    margin: EdgeInsets.symmetric(vertical: 8.0),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    elevation: 4,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(exercise["name"]!, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          SizedBox(height: 5),
-                          Text("Duration/Reps: ${exercise["duration"] ?? exercise["reps"]}", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                          SizedBox(height: 5),
-                          Text(exercise["desc"]!, style: TextStyle(fontSize: 14)),
-                          SizedBox(height: 10),
-                          Text("How to Perform:", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                          SizedBox(height: 5),
-                          Text(exercise["steps"]!, style: TextStyle(fontSize: 14)),
-                          SizedBox(height: 10),
-                        ],
-                      ),
+            // Start Button
+            if (!_isWorkoutStarted)
+              Center(
+                child: ElevatedButton(
+                  onPressed: _startWorkout,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFB39DDB),
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                  ),
+                  child: const Text(
+                    "Start",
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 20),
+
+            // Current Exercise Details
+            Card(
+              margin: const EdgeInsets.symmetric(vertical: 8.0),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              elevation: 4,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      currentExercise["name"]!,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                  );
-                },
+                    const SizedBox(height: 5),
+                    Text(
+                      "Duration/Reps: ${currentExercise["duration"] ?? currentExercise["reps"]}",
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      currentExercise["desc"]!,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      "How to Perform:",
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      currentExercise["steps"]!,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ],
+                ),
               ),
             ),
 
             const SizedBox(height: 20),
 
             // Next Exercise Button
-            ElevatedButton(
-              onPressed: _nextExercise,
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB39DDB)),
-              child: const Text("Next Exercise", style: TextStyle(color: Colors.white)),
-            ),
+            if (_isWorkoutStarted)
+              Center(
+                child: ElevatedButton(
+                  onPressed: _nextExercise,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFB39DDB),
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                  ),
+                  child: const Text(
+                    "Next Exercise",
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
