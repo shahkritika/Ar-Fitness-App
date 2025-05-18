@@ -1,0 +1,35 @@
+pluginManagement {
+    def flutterSdkPath = {
+        def properties = new Properties()
+        file("local.properties").withInputStream { properties.load(it) }
+        def flutterSdkPath = properties.getProperty("flutter.sdk")
+        assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+        return flutterSdkPath
+    }()
+
+    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+// ✅ Move `plugins {}` block **AFTER** `pluginManagement`
+plugins {
+    id "com.android.application" version "8.4.0" apply false  // Updated to 8.4.0
+    id "org.jetbrains.kotlin.android" version "2.1.0" apply false // Updated Kotlin
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+}
+
+// ✅ Correctly include the app module
+include(":app")
+
+// ✅ Ensure dependency resolution settings are correctly configured
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}

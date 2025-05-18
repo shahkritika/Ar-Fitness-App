@@ -1,0 +1,95 @@
+name: fitness_app
+description: "A new Flutter project."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+dependencies:
+  # Core Flutter packages
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.2
+  animations: ^2.0.11
+  sensors_plus: ^5.0.1
+
+
+  #for backend
+  firebase_core: ^3.7.0
+  firebase_auth: ^5.4.0
+  cloud_firestore: ^5.5.0
+  firebase_analytics: ^11.4.0
+
+  # UI & Graphics
+  google_fonts: ^6.2.1
+  lottie: ^3.3.1
+  flutter_svg: ^2.0.10
+  curved_navigation_bar: ^1.0.3
+  fl_chart: ^0.70.2
+
+  # Camera & Video
+  camera: ^0.10.5+4
+  video_player: ^2.9.2
+
+  # ML & Pose Detection
+  google_mlkit_pose_detection: ^0.13.0
+  google_mlkit_commons: ^0.9.0
+  tflite_flutter: ^0.11.0
+
+  # Networking & Storage
+  http: ^1.3.0
+  shared_preferences: ^2.2.3
+  flutter_dotenv: ^5.2.1
+  permission_handler: ^11.0.1
+
+  # Image Processing
+  image: ^4.1.3
+
+  # App Icon Generator
+  flutter_launcher_icons: ^0.14.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_tts: ^3.8.4
+  path_provider: ^2.1.2
+  path: ^1.8.3
+  intl: ^0.18.1
+  sqflite: ^2.3.3
+  animate_do: ^3.3.4
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/KayaMove.png
+    - assets/Gymboy.jpg
+    - assets/Gymgirl.jpg
+    - assets/yoga.jpg
+    - assets/Plank.jpg
+    - assets/Pushups.jpg
+    - assets/Squat.jpg
+    - assets/Lunges.jpg
+    - assets/cardio.png
+    - assets/yogaicon.png
+    - assets/hiit.png
+    - assets/dumbel.png
+    - assets/videos/squat.mp4
+    - assets/videos/pushup.mp4
+    - assets/videos/lift.mp4
+    - assets/videos/benchpress.mp4
+    - assets/videos/burpees.mp4
+    - assets/videos/downward.mp4
+    - assets/videos/highknees.mp4
+    - assets/videos/jumpingjacks.mp4
+    - assets/videos/treepose.mp4
+    - assets/videos/plank.mp4
+    - assets/videos/jumprope.mp4
+    - assets/videos/running.mp4
+    - assets/videos/mountain.mp4
+    - assets/videos/lunges.mp4
+    - .env
+    - assets/default_avatar.jpg

@@ -1,0 +1,43 @@
+// ✅ buildscript must come first
+buildscript {
+    ext.kotlin_version = '2.1.0' // ✅ latest Kotlin version you want to use
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url 'https://jitpack.io' }
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.3.0' // ✅ matches latest AGP
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version" // ✅ Kotlin plugin
+        classpath 'com.google.gms:google-services:4.4.2' // ✅ Firebase services plugin
+    }
+}
+
+// ✅ plugins block comes after buildscript
+plugins {
+    id 'com.google.gms.google-services' version '4.4.2' apply false
+    // ❌ DO NOT declare the Kotlin plugin here to avoid version conflict
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+        maven { url 'https://maven.google.com' }
+    }
+}
+
+rootProject.buildDir = "../build"
+
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

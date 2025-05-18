@@ -1,0 +1,57 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+    id "com.google.gms.google-services"
+}
+
+android {
+    namespace "com.fitness_app"
+    compileSdkVersion 34 // ✅ 34 is safest for now; 35 is not fully stable for MLKit/ARCore
+
+    defaultConfig {
+        applicationId "com.fitness_app"
+        minSdkVersion 24 // ✅ Needed for ARCore
+        targetSdkVersion 34 // ✅ Match compileSdkVersion
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17 // ✅ Match Kotlin jvmTarget
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17" // ✅ Must match compileOptions
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    // ✅ Use only ONE pose-detection dependency
+    implementation 'com.google.mlkit:pose-detection:18.0.0-beta3'
+
+    implementation 'com.google.mlkit:face-detection:16.1.5'
+
+    // ✅ Firebase BOM automatically resolves compatible versions
+    implementation platform('com.google.firebase:firebase-bom:33.9.0')
+    implementation 'com.google.firebase:firebase-analytics'
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-firestore'
+}
+
+flutter {
+    source = "../.."
+}

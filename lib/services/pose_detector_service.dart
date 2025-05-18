@@ -1,99 +1,81 @@
-import 'dart:math';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import '../utils/exercise_analyzer.dart';
 
-/// Callback with detected pose and calculated angles.
-typedef PoseWithAnglesCallback = void Function(Pose? pose, Map<String, double> angles);
-
-/// Service to detect body poses using ML Kit.
 class PoseDetectorService {
   final PoseDetector _poseDetector;
-  final PoseWithAnglesCallback onPoseDetected;
+  ExerciseAnalyzer _exerciseAnalyzer;
+  final Function(AnalysisResult, Pose?) onAnalysisComplete;
+  String _currentExercise = 'squat';
+  double _elapsedSeconds = 0.0;
+  Timer? _timer;
 
-  /// Constructor initializes pose detector and sets callback
-  PoseDetectorService({required this.onPoseDetected})
-      : _poseDetector = PoseDetector(options: PoseDetectorOptions());
+  PoseDetectorService({required this.onAnalysisComplete})
+      : _poseDetector = PoseDetector(options: PoseDetectorOptions()),
+        _exerciseAnalyzer = ExerciseAnalyzer(exerciseType: 'squat') {
+    _startTimer();
+  }
 
-  /// Processes image and returns pose and joint angles
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      _elapsedSeconds += 0.1;
+    });
+  }
+
+  void setCurrentExercise(String exercise) {
+    _currentExercise = exercise.toLowerCase();
+    _exerciseAnalyzer = ExerciseAnalyzer(exerciseType: _currentExercise);
+  }
+
   Future<void> processImage(InputImage inputImage) async {
     try {
       final poses = await _poseDetector.processImage(inputImage);
 
       if (poses.isNotEmpty) {
-        final Pose pose = poses.first;
-        final Map<String, double> angles = _calculateJointAngles(pose);
-        onPoseDetected(pose, angles);
+        final pose = poses.first;
+        final analysis = _exerciseAnalyzer.processPose(pose, _elapsedSeconds);
+        onAnalysisComplete(analysis, pose);
       } else {
-        onPoseDetected(null, {});
+        onAnalysisComplete(
+          AnalysisResult(
+            feedback: 'No person detected',
+            formFeedback: '',
+            reps: 0,
+            goodReps: 0,
+            badReps: 0,
+            isComplete: false,
+            isGoodForm: false,
+            durationSeconds: _elapsedSeconds,
+          ),
+          null,
+        );
       }
     } catch (e) {
       debugPrint("Pose detection failed: $e");
-      onPoseDetected(null, {});
+      onAnalysisComplete(
+        AnalysisResult(
+          feedback: 'Error analyzing pose',
+          formFeedback: '',
+          reps: 0,
+          goodReps: 0,
+          badReps: 0,
+          isComplete: false,
+          isGoodForm: false,
+          durationSeconds: _elapsedSeconds,
+        ),
+        null,
+      );
     }
   }
 
-  /// Calculate joint angles from landmarks using vector math
-  Map<String, double> _calculateJointAngles(Pose pose) {
-    double? angle(PoseLandmark? a, PoseLandmark? b, PoseLandmark? c) {
-      if (a == null || b == null || c == null) return null;
-
-      final baX = a.x - b.x;
-      final baY = a.y - b.y;
-      final bcX = c.x - b.x;
-      final bcY = c.y - b.y;
-
-      final dotProduct = baX * bcX + baY * bcY;
-      final magnitudeBA = sqrt(baX * baX + baY * baY);
-      final magnitudeBC = sqrt(bcX * bcX + bcY * bcY);
-
-      final cosineAngle = dotProduct / (magnitudeBA * magnitudeBC);
-      final radians = acos(cosineAngle.clamp(-1.0, 1.0)); // Clamp avoids NaN
-      return radians * (180 / pi);
-    }
-
-    final landmarks = pose.landmarks;
-
-    return {
-      // Arm joints
-      'left_elbow': angle(
-        landmarks[PoseLandmarkType.leftShoulder],
-        landmarks[PoseLandmarkType.leftElbow],
-        landmarks[PoseLandmarkType.leftWrist],
-      ) ?? 0.0,
-      'right_elbow': angle(
-        landmarks[PoseLandmarkType.rightShoulder],
-        landmarks[PoseLandmarkType.rightElbow],
-        landmarks[PoseLandmarkType.rightWrist],
-      ) ?? 0.0,
-
-      // Leg joints
-      'left_knee': angle(
-        landmarks[PoseLandmarkType.leftHip],
-        landmarks[PoseLandmarkType.leftKnee],
-        landmarks[PoseLandmarkType.leftAnkle],
-      ) ?? 0.0,
-      'right_knee': angle(
-        landmarks[PoseLandmarkType.rightHip],
-        landmarks[PoseLandmarkType.rightKnee],
-        landmarks[PoseLandmarkType.rightAnkle],
-      ) ?? 0.0,
-
-      // Shoulder joints (for posture/jumping jack detection)
-      'left_shoulder': angle(
-        landmarks[PoseLandmarkType.leftElbow],
-        landmarks[PoseLandmarkType.leftShoulder],
-        landmarks[PoseLandmarkType.leftHip],
-      ) ?? 0.0,
-      'right_shoulder': angle(
-        landmarks[PoseLandmarkType.rightElbow],
-        landmarks[PoseLandmarkType.rightShoulder],
-        landmarks[PoseLandmarkType.rightHip],
-      ) ?? 0.0,
-    };
+  void reset() {
+    _exerciseAnalyzer.reset();
+    _elapsedSeconds = 0.0;
   }
 
-  /// Close the detector when not needed
   void dispose() {
+    _timer?.cancel();
     _poseDetector.close();
   }
 }
