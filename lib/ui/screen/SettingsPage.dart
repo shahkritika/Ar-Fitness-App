@@ -6,23 +6,25 @@ import 'package:fitness_app/ui/screen/AppInfoPage.dart';
 import 'package:fitness_app/ui/screen/login_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'dart:math' as math;
-import 'dart:io' show Platform, SocketException, InternetAddress;
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
-  // Check network connectivity
-  Future<bool> _checkNetwork() async {
-    try {
-      final result = await InternetAddress.lookup('firestore.googleapis.com');
-      bool isConnected = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-      print('Network check: firestore.googleapis.com reachable = $isConnected'); // Debug log
-      return isConnected;
-    } on SocketException catch (e) {
-      print('Network check failed: $e'); // Debug log
-      return false;
-    }
+  @override
+  _SettingsPageState createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  Map<String, String>? _cachedProfile;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCachedProfile().then((cache) {
+      setState(() {
+        _cachedProfile = cache;
+      });
+    });
   }
 
   // Cache profile data locally
@@ -31,6 +33,9 @@ class SettingsPage extends StatelessWidget {
     await prefs.setString('profile_name', name);
     await prefs.setString('profile_email', email ?? 'No email');
     print('Cached profile: name=$name, email=${email ?? 'No email'}'); // Debug log
+    setState(() {
+      _cachedProfile = {'name': name, 'email': email ?? 'No email'};
+    });
   }
 
   // Load cached profile data
@@ -42,31 +47,43 @@ class SettingsPage extends StatelessWidget {
     return {'name': name, 'email': email};
   }
 
-  // Retry Firestore query with exponential backoff and jitter
-  Future<DocumentSnapshot> _fetchUserData(String uid, {int retryCount = 10, int baseDelayMs = 1000}) async {
-    bool hasNetwork = await _checkNetwork();
-    print('Network status: $hasNetwork'); // Debug log
-    if (!hasNetwork) {
-      throw Exception('No internet connection detected');
-    }
+  // Clear cached profile data
+  Future<void> _clearCachedProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('profile_name');
+    await prefs.remove('profile_email');
+    print('Cleared cached profile'); // Debug log
+    setState(() {
+      _cachedProfile = null;
+    });
+  }
 
-    print('Firestore instance: ${FirebaseFirestore.instance.app.name}'); // Debug log
-    for (int attempt = 1; attempt <= retryCount; attempt++) {
-      try {
-        print('Attempt $attempt: Fetching Firestore data for UID: $uid'); // Debug log
-        return await FirebaseFirestore.instance.collection('users').doc(uid).get();
-      } catch (e) {
-        print('Firestore attempt $attempt failed: $e'); // Debug log
-        if (e.toString().contains('unavailable') && attempt < retryCount) {
-          int delay = (baseDelayMs * math.pow(2, attempt - 1)).toInt() + math.Random().nextInt(100);
-          print('Retrying after $delay ms'); // Debug log
-          await Future.delayed(Duration(milliseconds: delay));
-          continue;
-        }
-        rethrow;
+  // Fetch user data from Firestore, prioritizing cache
+  Future<DocumentSnapshot> _fetchUserData(String uid) async {
+    try {
+      print('Fetching Firestore data for UID: $uid'); // Debug log
+      // Try cache first
+      final cacheResult = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get(const GetOptions(source: Source.cache));
+      if (cacheResult.exists) {
+        print('Data found in cache'); // Debug log
+        return cacheResult;
       }
+      // Fallback to server
+      print('No cache, fetching from server'); // Debug log
+      return await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get(const GetOptions(source: Source.serverAndCache))
+          .timeout(const Duration(seconds: 3), onTimeout: () {
+        throw Exception('Firestore request timed out');
+      });
+    } catch (e) {
+      print('Firestore fetch error: $e'); // Debug log
+      rethrow;
     }
-    throw Exception('Failed to fetch Firestore data after $retryCount attempts');
   }
 
   @override
@@ -77,7 +94,7 @@ class SettingsPage extends StatelessWidget {
     print('Firestore persistence enabled'); // Debug log
 
     final User? user = FirebaseAuth.instance.currentUser;
-    print('User: ${user?.uid}, Email: ${user?.email}, RefreshToken: ${user?.refreshToken}'); // Debug log
+    print('User: ${user?.uid}, Email: ${user?.email}, DisplayName: ${user?.displayName}'); // Debug log
 
     if (user == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -91,6 +108,9 @@ class SettingsPage extends StatelessWidget {
         body: Center(child: CircularProgressIndicator()),
       );
     }
+
+    // Cache user data
+    _cacheProfileData(user.displayName ?? 'User', user.email);
 
     return Scaffold(
       appBar: AppBar(
@@ -122,7 +142,7 @@ class SettingsPage extends StatelessWidget {
               title: "Delete Account",
               icon: Icons.delete,
               iconColor: Colors.red,
-              onTap: () => _showDeleteAccountDialog(context),
+              onTap: () => _showDeleteAccountDialog(context, user),
             ),
             _buildSettingOption(
               context,
@@ -142,122 +162,45 @@ class SettingsPage extends StatelessWidget {
   }
 
   Widget _buildProfileSection(User user) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: _fetchUserData(user.uid).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw Exception('Firestore request timed out');
-      }),
-      builder: (context, snapshot) {
-        print('Firestore snapshot: ${snapshot.hasData}, Error: ${snapshot.error}, State: ${snapshot.connectionState}'); // Debug log
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          print('Firestore error: ${snapshot.error}'); // Debug log
-          String errorMessage = 'Failed to load profile';
-          if (snapshot.error.toString().contains('unavailable') || snapshot.error.toString().contains('No internet')) {
-            errorMessage = 'No internet connection. Please check your network and try again.';
-          } else if (snapshot.error.toString().contains('permission-denied')) {
-            errorMessage = 'Permission denied. Check Firebase configuration or contact support.';
-          } else if (snapshot.error.toString().contains('timed out')) {
-            errorMessage = 'Request timed out. Check your internet and try again.';
-          }
-          // Load cached profile as fallback
-          return FutureBuilder<Map<String, String>>(
-            future: _loadCachedProfile(),
-            builder: (context, cacheSnapshot) {
-              if (!cacheSnapshot.hasData) {
-                return Center(
-                  child: Column(
-                    children: [
-                      Text(
-                        errorMessage,
-                        style: GoogleFonts.poppins(color: Colors.white70, fontSize: 16),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 10),
-                      ElevatedButton(
-                        onPressed: () => Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(builder: (context) => const SettingsPage()),
-                        ),
-                        child: const Text("Retry"),
-                      ),
-                    ],
-                  ),
-                );
-              }
-              final cache = cacheSnapshot.data!;
-              return Column(
-                children: [
-                  Text(
-                    cache['name']!,
-                    style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    cache['email']!,
-                    style: GoogleFonts.poppins(fontSize: 16, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Using cached data due to: $errorMessage',
-                    style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const SettingsPage()),
-                    ),
-                    child: const Text("Retry"),
-                  ),
-                ],
-              );
-            },
-          );
-        }
-        if (!snapshot.hasData || !snapshot.data!.exists) {
-          print('Firestore data: No document found for UID: ${user.uid}'); // Debug log
-          // Cache default profile
-          _cacheProfileData('User', user.email);
-          return Column(
-            children: [
-              Text(
-                'User',
-                style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                user.email ?? 'No email',
-                style: GoogleFonts.poppins(fontSize: 16, color: Colors.white70),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'No profile data found. Please update your profile.',
-                style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-          );
-        }
+    // Show cached or Firebase Auth data immediately
+    final defaultName = _cachedProfile?['name'] ?? user.displayName ?? 'User';
+    final defaultEmail = _cachedProfile?['email'] ?? user.email ?? 'No email';
 
-        final userData = snapshot.data!.data() as Map<String, dynamic>? ?? {};
-        print('Firestore data: $userData'); // Debug log
-        final name = userData['name'] ?? 'User';
-        final email = user.email ?? 'No email';
-        // Cache successful fetch
-        _cacheProfileData(name, email);
+    return FutureBuilder<DocumentSnapshot>(
+      future: _fetchUserData(user.uid),
+      builder: (context, snapshot) {
+        print('Future snapshot: ${snapshot.hasData}, Error: ${snapshot.error}, State: ${snapshot.connectionState}'); // Debug log
+
+        String name = defaultName;
+        String email = defaultEmail;
+
+        if (snapshot.connectionState == ConnectionState.done && snapshot.hasData && snapshot.data!.exists) {
+          final userData = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+          print('Firestore data: $userData'); // Debug log
+          name = userData['name'] ?? name;
+          email = userData['email'] ?? email;
+          _cacheProfileData(name, email);
+        }
 
         return Column(
           children: [
+            const Icon(Icons.person, size: 80, color: Colors.white),
+            const SizedBox(height: 12),
             Text(
               name,
               style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
               email,
               style: GoogleFonts.poppins(fontSize: 16, color: Colors.white70),
             ),
+            if (snapshot.connectionState == ConnectionState.waiting && _cachedProfile == null) ...[
+              const SizedBox(height: 8),
+              const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFB39DDB)),
+              ),
+            ],
           ],
         );
       },
@@ -380,7 +323,7 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  void _showDeleteAccountDialog(BuildContext context) {
+  void _showDeleteAccountDialog(BuildContext context, User user) {
     bool isLoading = false;
 
     showDialog(
@@ -406,34 +349,156 @@ class SettingsPage extends StatelessWidget {
                       : () async {
                           setState(() => isLoading = true);
                           try {
-                            final user = FirebaseAuth.instance.currentUser;
-                            print('Deleting Firestore document for UID: ${user?.uid}'); // Debug log
-                            await FirebaseFirestore.instance.collection('users').doc(user?.uid).delete();
-                            print('Deleting user account'); // Debug log
-                            await user?.delete();
-                            print('Account deleted'); // Debug log
+                            print('Attempting to delete user account for UID: ${user.uid}'); // Debug log
+                            await user.delete();
+                            print('User account deleted, deleting Firestore document'); // Debug log
+                            await FirebaseFirestore.instance.collection('users').doc(user.uid).delete();
+                            print('Firestore document deleted'); // Debug log
+                            await _clearCachedProfile();
                             Navigator.pop(context);
                             Navigator.pushAndRemoveUntil(
                               context,
                               MaterialPageRoute(builder: (context) => const LoginPage()),
                               (route) => false,
                             );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Account deleted successfully")),
+                            );
+                          } on FirebaseAuthException catch (e) {
+                            print('Delete account error: ${e.code}, ${e.message}'); // Debug log
+                            setState(() => isLoading = false);
+                            Navigator.pop(context);
+                            if (e.code == 'requires-recent-login') {
+                              _showReauthenticationDialog(context, user);
+                            } else {
+                              String errorMessage = e.message ?? 'Failed to delete account';
+                              if (e.code == 'user-mismatch') {
+                                errorMessage = 'User session invalid. Please log out and log in again.';
+                              } else if (e.code == 'invalid-credential') {
+                                errorMessage = 'Invalid credentials. Please try again.';
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(errorMessage)),
+                              );
+                            }
                           } catch (e) {
-                            print('Delete account error: $e'); // Debug log
-                            String errorMessage = 'An error occurred';
-                            if (e is FirebaseAuthException) {
-                              print('FirebaseAuthException code: ${e.code}, message: ${e.message}'); // Debug log
-                              errorMessage = e.message ?? 'Authentication error';
+                            print('Unexpected error: $e'); // Debug log
+                            setState(() => isLoading = false);
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('An unexpected error occurred')),
+                            );
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  child: isLoading ? const CircularProgressIndicator() : const Text("Delete"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showReauthenticationDialog(BuildContext context, User user) {
+    TextEditingController passwordController = TextEditingController();
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: Colors.black,
+              title: Text("Re-authenticate", style: GoogleFonts.poppins(color: Colors.white)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    "Please enter your password to verify your identity.",
+                    style: GoogleFonts.poppins(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 10),
+                  _buildPasswordField(passwordController, "Password"),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoading ? null : () => Navigator.pop(context),
+                  child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          setState(() => isLoading = true);
+                          final email = user.email;
+                          final password = passwordController.text.trim();
+
+                          if (email == null || password.isEmpty) {
+                            setState(() => isLoading = false);
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Password is required")),
+                            );
+                            return;
+                          }
+
+                          try {
+                            print('Attempting re-authentication for email: $email'); // Debug log
+                            final cred = EmailAuthProvider.credential(email: email, password: password);
+                            await user.reauthenticateWithCredential(cred);
+                            print('Re-authentication successful, retrying delete'); // Debug log
+                            await user.delete();
+                            print('User account deleted, deleting Firestore document'); // Debug log
+                            await FirebaseFirestore.instance.collection('users').doc(user.uid).delete();
+                            print('Firestore document deleted'); // Debug log
+                            await _clearCachedProfile();
+                            Navigator.pop(context);
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(builder: (context) => const LoginPage()),
+                              (route) => false,
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Account deleted successfully")),
+                            );
+                          } on FirebaseAuthException catch (e) {
+                            print('Re-authentication error: ${e.code}, ${e.message}'); // Debug log
+                            String errorMessage = 'Failed to verify password';
+                            switch (e.code) {
+                              case 'wrong-password':
+                                errorMessage = 'Incorrect password';
+                                break;
+                              case 'user-mismatch':
+                                errorMessage = 'User session invalid. Please log out and log in again.';
+                                break;
+                              case 'invalid-credential':
+                                errorMessage = 'Invalid credentials. Please try again.';
+                                break;
+                              case 'network-request-failed':
+                                errorMessage = 'Network error. Please check your connection.';
+                                break;
+                              default:
+                                errorMessage = e.message ?? 'Authentication error';
                             }
                             setState(() => isLoading = false);
                             Navigator.pop(context);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(errorMessage)),
                             );
+                          } catch (e) {
+                            print('Unexpected error: $e'); // Debug log
+                            setState(() => isLoading = false);
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('An unexpected error occurred')),
+                            );
                           }
                         },
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  child: isLoading ? const CircularProgressIndicator() : const Text("Delete"),
+                  child: isLoading ? const CircularProgressIndicator() : const Text("Verify"),
                 ),
               ],
             );
