@@ -37,11 +37,13 @@ class _PreloaderPageState extends State<PreloaderPage> with TickerProviderStateM
   }
 
   Future<void> _simulateLoading() async {
-    await Future.delayed(const Duration(seconds: 5));
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginPage()),
-    );
+    await Future.delayed(const Duration(seconds: 5)); // 5-second delay
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+      );
+    }
   }
 
   void _startAnimations() async {
@@ -74,7 +76,6 @@ class _PreloaderPageState extends State<PreloaderPage> with TickerProviderStateM
                 fit: BoxFit.contain,
               ),
             ),
-            
             const SizedBox(height: 20),
             FadeTransition(
               opacity: _textOpacity,

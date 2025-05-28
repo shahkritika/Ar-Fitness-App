@@ -1,26 +1,27 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:animate_do/animate_do.dart';
-import '../../services/pose_detector_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:hive/hive.dart';
 import '../../utils/exercise_analyzer.dart';
+import '../../utils/exercise_data.dart';
 import '../../widgets/landmark_painter.dart';
 import '../../widgets/real_time_feedbacks_widget.dart';
 import '../../widgets/workout_summary.dart';
-import '../../utils/database_helper.dart'; // Added import
 
 class ARWorkoutPage extends StatefulWidget {
   final String workoutType;
   final String workoutCategory;
   final VoidCallback? onNextExercise;
   final int targetReps;
+  final double targetDuration;
+  final String? initialExercise;
 
   const ARWorkoutPage({
     Key? key,
@@ -28,6 +29,8 @@ class ARWorkoutPage extends StatefulWidget {
     required this.workoutCategory,
     this.onNextExercise,
     this.targetReps = 10,
+    this.targetDuration = 40.0,
+    this.initialExercise,
   }) : super(key: key);
 
   @override
@@ -40,11 +43,13 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
   bool _isProcessingFrame = false;
   bool _isFrontCamera = true;
   bool _isSaving = false;
+  bool _isCalibrated = false;
 
   Pose? _pose;
-  late final PoseDetectorService _poseDetectorService;
+  late ExerciseAnalyzer _analyzer;
+  late PoseDetector _poseDetector;
 
-  String _feedback = 'Get in starting position 😎';
+  String _feedback = 'Stand still to calibrate 😎';
   String _formFeedback = '';
   int _reps = 0;
   int _goodReps = 0;
@@ -56,76 +61,128 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
   int _framesProcessed = 0;
   int _lastRepCount = 0;
 
-  final List<String> validWorkoutTypes = [
-    'squat', 'pushup', 'deadlift', 'bench_press', 'lunge', 'plank',
-    'jumping_jacks', 'mountain_climbers', 'running_in_place', 'skaters',
-    'butt_kicks', 'jump_rope', 'downward_dog', 'tree_pose', 'warrior_ii',
-    'child_pose', 'bridge_pose', 'seated_forward_bend', 'burpees',
-    'high_knees', 'jump_squats', 'lunges_with_jumps', 'plank_to_pushup',
+  static const List<String> validWorkoutTypes = [
+    'squat',
+    'pushup',
+    'deadlift',
+    'bench_press',
+    'lunge',
+    'plank',
+    'jumping_jacks',
+    'mountain_climbers',
+    'running_in_place',
+    'high_knees',
   ];
 
-  final List<String> repBasedExercises = [
-    'squat', 'pushup', 'deadlift', 'bench_press', 'lunge',
-    'jumping_jacks', 'mountain_climbers', 'running_in_place', 'skaters',
-    'butt_kicks', 'jump_rope', 'burpees', 'high_knees', 'jump_squats',
-    'lunges_with_jumps', 'plank_to_pushup',
+  static const List<String> repBasedExercises = [
+    'squat',
+    'pushup',
+    'deadlift',
+    'bench_press',
+    'lunge',
+    'jumping_jacks',
+    'mountain_climbers',
+    'running_in_place',
+    'high_knees',
   ];
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    final workoutTypeLower = widget.workoutType.toLowerCase();
+
+    String normalizeWorkoutType(String input) {
+      return input
+          .trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'\s+'), '_')
+          .replaceAll(RegExp(r'[^\w_]'), '');
+    }
+
+    final rawExercise = widget.initialExercise ?? widget.workoutType;
+    final workoutTypeLower = normalizeWorkoutType(rawExercise);
+    print('ARWorkoutPage: Raw exercise: "$rawExercise", Normalized: "$workoutTypeLower", Category: "${widget.workoutCategory}"');
+
     final selectedWorkoutType = validWorkoutTypes.contains(workoutTypeLower)
         ? workoutTypeLower
         : 'squat';
+
     if (selectedWorkoutType != workoutTypeLower) {
-      print('Invalid workoutType: ${widget.workoutType}. Defaulting to $selectedWorkoutType');
+      print('Invalid workoutType: "$rawExercise" (normalized: "$workoutTypeLower"). Defaulting to $selectedWorkoutType');
+      print('Valid workout types: $validWorkoutTypes');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Invalid exercise: "$rawExercise". Using squat.'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } else {
+      print('Selected workoutType: "$selectedWorkoutType"');
     }
+
     _isRepBased = repBasedExercises.contains(selectedWorkoutType);
-    _poseDetectorService = PoseDetectorService(
-      onAnalysisComplete: (AnalysisResult analysis, Pose? pose) {
-        if (mounted) {
-          setState(() {
-            _pose = pose;
-            _feedback = _enhanceFeedback(analysis.feedback, analysis.isGoodForm);
-            _formFeedback = analysis.formFeedback.isNotEmpty
-                ? 'Form: ${analysis.formFeedback} ${analysis.isGoodForm ? "💯" : "😬"}'
-                : '';
-            if (pose != null && !analysis.feedback.contains('No person')) {
-              _reps = analysis.reps;
-              _goodReps = analysis.goodReps;
-              _badReps = analysis.badReps;
-              _durationSeconds = analysis.durationSeconds;
-              _isExerciseComplete = analysis.isComplete;
-              _lastRepCount = _reps;
-            } else {
-              _feedback = 'Yo, where you at? 😎';
-              _formFeedback = '';
-            }
-            print('UI updated: Pose=${pose != null}, Reps=$_reps, Good=$_goodReps, Bad=$_badReps, Duration=$_durationSeconds, Feedback=$_feedback');
-            if (_pose != null) {
-              _pose!.landmarks.forEach((type, landmark) {
-                print('Landmark $type: x=${landmark.x}, y=${landmark.y}, likelihood=${landmark.likelihood}');
-              });
-            }
-          });
-        }
-      },
+    print('Rep-based: $_isRepBased');
+
+    final exerciseData = ExerciseData.exercises[widget.workoutCategory]
+            ?.firstWhere(
+              (e) {
+                final normalizedName = normalizeWorkoutType(e['name'] ?? '');
+                print('Checking exercise: "${e['name']}", Normalized: "$normalizedName" vs "$selectedWorkoutType"');
+                return normalizedName == selectedWorkoutType;
+              },
+              orElse: () {
+                print('No matching exercise found for "$selectedWorkoutType" in category "${widget.workoutCategory}"');
+                return {'targetReps': '10', 'duration': '40s'};
+              },
+            ) ??
+        {'targetReps': '10', 'duration': '40s'};
+
+    print('Exercise data: $exerciseData');
+
+    final targetReps = int.tryParse(exerciseData['targetReps'].toString()) ?? widget.targetReps;
+    final targetDuration = double.tryParse(exerciseData['duration'].toString().replaceAll('s', '')) ?? widget.targetDuration;
+
+    print('Target reps: $targetReps, Target duration: $targetDuration');
+
+    _analyzer = ExerciseAnalyzer(
+      exerciseType: selectedWorkoutType,
+      targetReps: targetReps,
+      targetDuration: targetDuration,
     );
-    _poseDetectorService.setCurrentExercise(selectedWorkoutType);
+    _poseDetector = PoseDetector(
+      options: PoseDetectorOptions(
+        model: PoseDetectionModel.accurate,
+        mode: PoseDetectionMode.stream,
+      ),
+    );
+
     if (!kIsWeb) {
       _initializeCamera();
     }
+
+    Future.doWhile(() async {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (!mounted || _isExerciseComplete) return false;
+      setState(() {
+        _durationSeconds += 0.1;
+        if (!_isRepBased && _durationSeconds >= targetDuration) {
+          _isExerciseComplete = true;
+        }
+      });
+      return true;
+    });
   }
 
   String _enhanceFeedback(String feedback, bool isGoodForm) {
-    if (feedback.contains('No person')) return 'Yo, where you at? 😎';
-    if (feedback.contains('Get in')) return 'Let’s vibe, get in position! 🚀';
+    if (feedback.contains('calibrate')) return 'Stand still to calibrate 🚀';
+    if (feedback.contains('No person') || feedback.contains('Position joints')) return 'Step into view! 😎';
+    if (feedback.contains('Get in')) return 'Ready? Get set! 🚀';
     if (isGoodForm) {
-      return 'Slayin’ it! $feedback 🔥';
+      return 'Nailing it! $feedback 🔥';
     } else {
-      return 'Oops, tweak it! $feedback 😬';
+      return 'Adjust form: $feedback 😬';
     }
   }
 
@@ -144,8 +201,9 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
 
       _cameraController = CameraController(
         selectedCamera,
-        ResolutionPreset.high,
+        ResolutionPreset.max,
         enableAudio: false,
+        imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
       );
 
       await _cameraController!.initialize();
@@ -168,6 +226,9 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
         setState(() {
           _feedback = 'Camera error: ${e.toString()} 😢';
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Camera error: $e. Try switching cameras.')),
+        );
       }
     }
   }
@@ -178,19 +239,24 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
       await _cameraController!.dispose();
       _cameraController = null;
     }
-    setState(() => _isFrontCamera = !_isFrontCamera);
+    setState(() {
+      _isFrontCamera = !_isFrontCamera;
+      _isCalibrated = false;
+      _feedback = 'Stand still to calibrate 😎';
+    });
     await _initializeCamera();
   }
 
   void _resetAnalyzer() {
-    _poseDetectorService.reset();
+    _analyzer.reset();
     setState(() {
       _reps = 0;
       _goodReps = 0;
       _badReps = 0;
       _durationSeconds = 0.0;
       _isExerciseComplete = false;
-      _feedback = 'Get in starting position 😎';
+      _isCalibrated = false;
+      _feedback = 'Stand still to calibrate 😎';
       _formFeedback = '';
       _pose = null;
       _lastRepCount = 0;
@@ -201,44 +267,44 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
   Future<void> _processCameraImage(CameraImage image) async {
     try {
       _framesProcessed++;
-      if (_framesProcessed % 4 != 0) {
+      final inputImage = _convertCameraImageToInputImage(image);
+      if (inputImage == null) {
         _isProcessingFrame = false;
         return;
       }
 
-      final WriteBuffer allBytes = WriteBuffer();
-      for (final Plane plane in image.planes) {
-        allBytes.putUint8List(plane.bytes);
-      }
-      final bytes = allBytes.done().buffer.asUint8List();
-
-      final inputImage = InputImage.fromBytes(
-        bytes: bytes,
-        metadata: InputImageMetadata(
-          size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: _isFrontCamera ? InputImageRotation.rotation270deg : InputImageRotation.rotation90deg,
-          format: InputImageFormat.nv21,
-          bytesPerRow: image.planes[0].bytesPerRow,
-        ),
-      );
-
-      await _poseDetectorService.processImage(inputImage);
-
-      if (_isExerciseComplete) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Exercise complete! ${_isRepBased ? "You crushed $_reps ${widget.workoutType}s! 🔥" : "Great job! 🔥"}'),
-              duration: const Duration(seconds: 3),
-              backgroundColor: const Color(0xFF6B48FF),
-            ),
-          );
-        }
-        if (widget.onNextExercise != null) {
-          Future.delayed(const Duration(seconds: 3), () {
-            if (mounted) widget.onNextExercise!();
+      final poses = await _poseDetector.processImage(inputImage);
+      if (poses.isNotEmpty) {
+        _pose = poses.first;
+        if (!_isCalibrated) {
+          _analyzer.calibrate(_pose!);
+          setState(() {
+            _feedback = 'Stand still to calibrate 😎';
+            _formFeedback = '';
+            _isCalibrated = _analyzer.isCalibrated; // Sync with analyzer
           });
+          _isProcessingFrame = false;
+          return;
         }
+        final result = _analyzer.processPose(_pose!, _durationSeconds);
+        setState(() {
+          _feedback = _enhanceFeedback(result.feedback, result.isGoodForm);
+          _formFeedback = result.formFeedback.isNotEmpty
+              ? 'Form: ${result.formFeedback} ${result.isGoodForm ? "💯" : "😬"}'
+              : '';
+          _reps = result.reps;
+          _goodReps = result.goodReps;
+          _badReps = result.badReps;
+          _durationSeconds = result.durationSeconds;
+          _isExerciseComplete = result.isComplete;
+          _lastRepCount = _reps;
+        });
+      } else {
+        setState(() {
+          _feedback = 'Step into view! 😎';
+          _formFeedback = '';
+          _pose = null;
+        });
       }
     } catch (e, stackTrace) {
       debugPrint("Pose detection error: $e");
@@ -253,6 +319,73 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
     }
   }
 
+  InputImage? _convertCameraImageToInputImage(CameraImage image) {
+    try {
+      if (Platform.isAndroid) {
+        final WriteBuffer allBytes = WriteBuffer();
+        for (final Plane plane in image.planes) {
+          allBytes.putUint8List(plane.bytes);
+        }
+        final bytes = allBytes.done().buffer.asUint8List();
+        return InputImage.fromBytes(
+          bytes: bytes,
+          metadata: InputImageMetadata(
+            size: Size(image.width.toDouble(), image.height.toDouble()),
+            rotation: _isFrontCamera ? InputImageRotation.rotation270deg : InputImageRotation.rotation90deg,
+            format: InputImageFormat.nv21,
+            bytesPerRow: image.planes[0].bytesPerRow,
+          ),
+        );
+      } else if (Platform.isIOS) {
+        return InputImage.fromBytes(
+          bytes: image.planes[0].bytes,
+          metadata: InputImageMetadata(
+            size: Size(image.width.toDouble(), image.height.toDouble()),
+            rotation: _isFrontCamera ? InputImageRotation.rotation270deg : InputImageRotation.rotation90deg,
+            format: InputImageFormat.bgra8888,
+            bytesPerRow: image.planes[0].bytesPerRow,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Error converting camera image: $e");
+    }
+    return null;
+  }
+
+  // Save workout summary to Hive
+  Future<void> _saveWorkoutSummary() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      print('No user logged in, cannot save workout summary');
+      return;
+    }
+
+    try {
+      final box = await Hive.openBox('workouts_${user.uid}');
+      final summary = {
+        'exerciseName': _analyzer.exerciseType, // Use normalized exercise type (e.g., "squat")
+        'date': DateTime.now().toIso8601String(),
+        'totalReps': _reps,
+        'goodReps': _goodReps,
+        'badReps': _badReps,
+        'durationSeconds': _durationSeconds,
+        'mode': 'AR',
+        'isRepBased': _isRepBased,
+        'isGoodForm': _goodReps >= _badReps, // Simplified form assessment
+      };
+      await box.add(summary);
+      print('Saved workout summary: $summary');
+    } catch (e) {
+      print('Error saving workout summary: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save workout: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _endWorkout() async {
     print('Finish button tapped at ${DateTime.now()}');
     if (_isSaving) {
@@ -261,7 +394,6 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
     }
     _isSaving = true;
     try {
-      // Stop and dispose camera only if initialized
       if (!kIsWeb && _cameraController != null && _isCameraInitialized) {
         try {
           if (_cameraController!.value.isStreamingImages) {
@@ -277,56 +409,8 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
         _isCameraInitialized = false;
       }
 
-      // Save workout data using DatabaseHelper
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please log in to save workout data 😢'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          Navigator.pushNamed(context, '/login');
-        }
-        return;
-      }
-
-      final workoutData = {
-        'date': DateTime.now().toIso8601String(),
-        'category': widget.workoutCategory,
-        'duration': _durationSeconds.toInt(),
-      };
-
-      final exerciseData = {
-        'exercise_name': widget.workoutType,
-        'reps': _reps,
-        'good_reps': _goodReps,
-        'bad_reps': _badReps,
-        'duration': _durationSeconds.toInt(),
-        'mode': 'AR',
-      };
-
-      bool saved = false;
-      try {
-        final dbHelper = DatabaseHelper.instance;
-        final workoutId = await dbHelper.insertWorkout(workoutData);
-        exerciseData['workout_id'] = workoutId;
-        await dbHelper.insertExercise(exerciseData);
-        await dbHelper.syncLocalWithFirestore(); // Ensure sync for mobile
-        saved = true;
-        print('Workout saved: WorkoutID=$workoutId, Data=$workoutData, Exercise=$exerciseData');
-      } catch (e) {
-        print('Error saving workout with DatabaseHelper: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Workout queued offline. Sync when online. 📴'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-      }
+      // Save the workout summary before navigating
+      await _saveWorkoutSummary();
 
       if (!mounted) {
         print('Widget not mounted, cannot navigate');
@@ -334,12 +418,10 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(saved
-              ? 'Workout saved! Loading summary... 🚀'
-              : 'Workout queued offline! Loading summary... 📴'),
-          duration: const Duration(seconds: 2),
-          backgroundColor: const Color(0xFF6B48FF),
+        const SnackBar(
+          content: Text('Loading summary... 🚀'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Color(0xFFB39DDB),
         ),
       );
 
@@ -354,7 +436,7 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
               goodReps: _goodReps,
               badReps: _badReps,
               durationSeconds: _durationSeconds.toInt(),
-              exerciseType: widget.workoutType,
+              exerciseType: _analyzer.exerciseType,
               workoutType: widget.workoutCategory,
               mode: 'AR',
               onDone: () {
@@ -392,7 +474,7 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
       _cameraController = null;
       _isCameraInitialized = false;
     }
-    _poseDetectorService.dispose();
+    _poseDetector.close();
     super.dispose();
   }
 
@@ -417,13 +499,13 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
         body: Center(
           child: Text(
             'Camera stream not supported on web. Use a mobile device! 📱',
-            style: GoogleFonts.orbitron(
+            style: GoogleFonts.poppins(
               fontSize: 20,
               color: Colors.white,
               shadows: [
                 Shadow(
                   blurRadius: 10,
-                  color: Colors.black.withOpacity(0.3),
+                  color: Color(0xFFB39DDB).withOpacity(0.2),
                   offset: const Offset(2, 2),
                 ),
               ],
@@ -443,10 +525,7 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF6B48FF),
-                    Color(0xFFA78BFA),
-                  ],
+                  colors: [Colors.black, Color(0xFFB39DDB)],
                 ),
               ),
               child: Stack(
@@ -490,22 +569,22 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
                           padding: const EdgeInsets.all(8),
                           margin: const EdgeInsets.symmetric(horizontal: 20),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.5),
+                            color: Color(0xFFB39DDB).withOpacity(0.2),
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.white.withOpacity(0.3)),
+                            border: Border.all(color: Color(0xFFB39DDB).withOpacity(0.5)),
                           ),
                           child: Text(
                             _isRepBased
                                 ? 'Reps: $_reps (Good: $_goodReps, Bad: $_badReps) 💪'
                                 : 'Time: ${_durationSeconds.toStringAsFixed(1)}s ⏱️',
-                            style: GoogleFonts.orbitron(
+                            style: GoogleFonts.poppins(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
                               shadows: [
                                 Shadow(
                                   blurRadius: 8,
-                                  color: Color(0xFF6B48FF).withOpacity(0.5),
+                                  color: Color(0xFFB39DDB).withOpacity(0.2),
                                   offset: const Offset(2, 2),
                                 ),
                               ],
@@ -525,7 +604,7 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
                       child: Container(
                         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width - 40),
                         child: RealTimeFeedbackWidget(
-                          workoutType: widget.workoutType,
+                          workoutType: _analyzer.exerciseType,
                           feedback: _feedback,
                           formFeedback: _formFeedback,
                           reps: _reps,
@@ -544,19 +623,11 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
                       duration: const Duration(milliseconds: 800),
                       child: FloatingActionButton(
                         onPressed: _toggleCamera,
-                        backgroundColor: Colors.transparent,
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF6B48FF), Color(0xFFA78BFA)],
-                            ),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.cameraswitch,
-                            color: Colors.white,
-                            size: 48,
-                          ),
+                        backgroundColor: Color(0xFFB39DDB),
+                        child: const Icon(
+                          Icons.cameraswitch,
+                          color: Colors.white,
+                          size: 48,
                         ),
                       ),
                     ),
@@ -568,20 +639,12 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
                       duration: const Duration(milliseconds: 800),
                       child: FloatingActionButton(
                         onPressed: _resetAnalyzer,
-                        backgroundColor: Colors.transparent,
+                        backgroundColor: Color(0xFFB39DDB),
                         tooltip: 'Reset Reps',
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF6B48FF), Color(0xFFA78BFA)],
-                            ),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.refresh,
-                            color: Colors.white,
-                            size: 30,
-                          ),
+                        child: const Icon(
+                          Icons.refresh,
+                          color: Colors.white,
+                          size: 30,
                         ),
                       ),
                     ),
@@ -595,27 +658,18 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
                       child: ElevatedButton(
                         onPressed: _endWorkout,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
+                          backgroundColor: Color(0xFFB39DDB),
                           padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(30),
                           ),
                         ),
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF6B48FF), Color(0xFFA78BFA)],
-                            ),
-                            borderRadius: BorderRadius.all(Radius.circular(30)),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          child: Text(
-                            'Slay It! Finish ✨',
-                            style: GoogleFonts.orbitron(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
+                        child: Text(
+                          'Slay It! Finish ✨',
+                          style: GoogleFonts.poppins(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
                           ),
                         ),
                       ),
@@ -627,13 +681,13 @@ class _ARWorkoutPageState extends State<ARWorkoutPage> with WidgetsBindingObserv
           : Center(
               child: Text(
                 'Loading vibes... 🚀',
-                style: GoogleFonts.orbitron(
+                style: GoogleFonts.poppins(
                   fontSize: 24,
                   color: Colors.white,
                   shadows: [
                     Shadow(
                       blurRadius: 10,
-                      color: Color(0xFF6B48FF).withOpacity(0.5),
+                      color: Color(0xFFB39DDB).withOpacity(0.2),
                       offset: const Offset(2, 2),
                     ),
                   ],

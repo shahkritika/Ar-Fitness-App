@@ -1,350 +1,252 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive/hive.dart';
 
 class SignupPage extends StatefulWidget {
-  const SignupPage({super.key});
+  const SignupPage({Key? key}) : super(key: key);
 
   @override
-  _SignupPageState createState() => _SignupPageState();
+  State<SignupPage> createState() => _SignupPageState();
 }
 
-class _SignupPageState extends State<SignupPage> with SingleTickerProviderStateMixin {
-  final TextEditingController _usernameController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
+class _SignupPageState extends State<SignupPage> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _usernameController = TextEditingController();
   bool _isLoading = false;
-  bool _obscurePassword = true;
-  bool _agreeToTerms = false;
-  late AnimationController _animationController;
-  late Animation<double> _scaleAnimation;
-
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
-  @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    );
-    _scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
-    _animationController.forward();
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    _usernameController.dispose();
-    _passwordController.dispose();
-    _emailController.dispose();
-    super.dispose();
-  }
-
-  // Cache profile data locally
-  Future<void> _cacheProfileData(String name, String? email) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('profile_name', name);
-    await prefs.setString('profile_email', email ?? 'No email');
-    print('Cached profile: name=$name, email=${email ?? 'No email'}'); // Debug log
-  }
 
   Future<void> _signup() async {
-    if (!_agreeToTerms) {
-      _showSnackBar("Please agree to the Terms & Conditions", Colors.red);
+    // Validate inputs
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+    final username = _usernameController.text.trim();
+
+    if (email.isEmpty || password.isEmpty || username.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all fields')),
+      );
       return;
     }
 
-    String username = _usernameController.text.trim();
-    String password = _passwordController.text.trim();
-    String email = _emailController.text.trim();
+    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid email')),
+      );
+      return;
+    }
 
-    if (username.isEmpty || password.isEmpty || email.isEmpty) {
-      _showSnackBar("Please fill in all fields", Colors.red);
+    if (password.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password must be at least 6 characters')),
+      );
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      // Create user in Firebase Authentication
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+      // Check if email is already registered
+      try {
+        final signInMethods = await FirebaseAuth.instance.fetchSignInMethodsForEmail(email);
+        if (signInMethods.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Email is already registered. Please log in.')),
+          );
+          setState(() => _isLoading = false);
+          return;
+        }
+      } catch (e) {
+        print('Error checking email: $e');
+        // Continue with signup, as this is just a pre-check
+      }
+
+      // Create user with Firebase
+      final credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
-      User? user = userCredential.user;
 
-      if (user != null) {
-        // Update displayName in Firebase Auth
-        await user.updateDisplayName(username);
+      // Update Firebase user profile
+      await credential.user?.updateDisplayName(username);
+      await credential.user?.reload();
+      final user = FirebaseAuth.instance.currentUser;
 
-        // Store username and email in Firestore
-        await _firestore.collection('users').doc(user.uid).set({
-          'name': username,
-          'email': email,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+      if (user == null || user.displayName != username) {
+        print('Warning: Firebase displayName not set correctly. Current displayName: ${user?.displayName}');
+        // Attempt to set again
+        await user?.updateDisplayName(username);
+        await user?.reload();
+      }
 
-        // Cache profile data
-        await _cacheProfileData(username, email);
+      // Save to Hive users box
+      final box = await Hive.openBox('users');
+      await box.put(credential.user?.uid, {
+        'name': username,
+        'email': email,
+      });
 
-        _showSnackBar("Signup successful!", Colors.green);
+      // Verify Hive data
+      final hiveData = box.get(credential.user?.uid) as Map<String, dynamic>?;
+      print('Signed up user: uid=${credential.user?.uid}, username=$username, email=$email');
+      print('Hive data saved: $hiveData'); // Debug log
+
+      if (hiveData == null || hiveData['name'] != username || hiveData['email'] != email) {
+        print('Error: Hive data verification failed');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save user data locally')),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Signup successful! Please log in.')),
+        );
         Navigator.pushReplacementNamed(context, '/login');
       }
     } on FirebaseAuthException catch (e) {
-      String errorMessage = e.message ?? "Signup failed";
-      if (e.code == 'email-already-in-use') {
-        errorMessage = 'This email is already registered.';
-      } else if (e.code == 'invalid-email') {
-        errorMessage = 'Invalid email format.';
-      } else if (e.code == 'weak-password') {
-        errorMessage = 'Password is too weak. Use at least 6 characters.';
+      String errorMessage;
+      switch (e.code) {
+        case 'email-already-in-use':
+          errorMessage = 'Email is already registered. Please log in.';
+          break;
+        case 'invalid-email':
+          errorMessage = 'Invalid email format.';
+          break;
+        case 'weak-password':
+          errorMessage = 'Password is too weak.';
+          break;
+        default:
+          errorMessage = 'Signup failed: ${e.message}';
       }
-      _showSnackBar(errorMessage, Colors.red);
+      print('Signup error: $e, code: ${e.code}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
+      }
     } catch (e) {
-      _showSnackBar("An error occurred: $e", Colors.red);
-    } finally {
-      setState(() => _isLoading = false);
+      print('Unexpected signup error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Signup failed: $e')),
+        );
+      }
     }
+    setState(() => _isLoading = false);
   }
 
-  void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          message,
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.black, Color(0xFFB39DDB)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        margin: const EdgeInsets.all(10),
-      ),
-    );
-  }
-
-  Widget _buildInputField({
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon,
-    bool obscureText = false,
-    Widget? suffixIcon,
-  }) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFB39DDB).withOpacity(0.3)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Sign Up',
+                  style: GoogleFonts.orbitron(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: _usernameController,
+                  decoration: InputDecoration(
+                    labelText: 'Username',
+                    labelStyle: GoogleFonts.orbitron(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white10,
+                    border: const OutlineInputBorder(),
+                    errorStyle: GoogleFonts.orbitron(color: Colors.redAccent),
+                  ),
+                  style: GoogleFonts.orbitron(color: Colors.white),
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _emailController,
+                  decoration: InputDecoration(
+                    labelText: 'Email',
+                    labelStyle: GoogleFonts.orbitron(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white10,
+                    border: const OutlineInputBorder(),
+                    errorStyle: GoogleFonts.orbitron(color: Colors.redAccent),
+                  ),
+                  style: GoogleFonts.orbitron(color: Colors.white),
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _passwordController,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    labelStyle: GoogleFonts.orbitron(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.white10,
+                    border: const OutlineInputBorder(),
+                    errorStyle: GoogleFonts.orbitron(color: Colors.redAccent),
+                  ),
+                  style: GoogleFonts.orbitron(color: Colors.white),
+                  obscureText: true,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _isLoading ? null : _signup(),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _signup,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6B48FF),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: _isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Text(
+                          'Sign Up',
+                          style: GoogleFonts.orbitron(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: _isLoading ? null : () => Navigator.pushNamed(context, '/login'),
+                  child: Text(
+                    'Already have an account? Log In',
+                    style: GoogleFonts.orbitron(color: Colors.white70),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
-      child: TextField(
-        controller: controller,
-        obscureText: obscureText,
-        style: GoogleFonts.poppins(
-          color: Colors.black87,
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-        ),
-        decoration: InputDecoration(
-          icon: Icon(icon, color: const Color(0xFFB39DDB), size: 24),
-          hintText: hint,
-          hintStyle: GoogleFonts.poppins(
-            color: Colors.grey[500],
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-          ),
-          border: InputBorder.none,
-          suffixIcon: suffixIcon,
         ),
       ),
     );
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.black,
-              Color(0xFFB39DDB),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Create Account",
-                        style: GoogleFonts.poppins(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      _buildInputField(
-                        controller: _usernameController,
-                        hint: "Username",
-                        icon: Icons.person_outline,
-                      ),
-                      _buildInputField(
-                        controller: _emailController,
-                        hint: "Email",
-                        icon: Icons.email_outlined,
-                      ),
-                      _buildInputField(
-                        controller: _passwordController,
-                        hint: "Password",
-                        icon: Icons.lock_outline,
-                        obscureText: _obscurePassword,
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                            color: const Color(0xFFB39DDB),
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _obscurePassword = !_obscurePassword;
-                            });
-                          },
-                        ),
-                      ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Checkbox(
-                            value: _agreeToTerms,
-                            activeColor: const Color(0xFFB39DDB),
-                            checkColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            onChanged: (value) {
-                              setState(() {
-                                _agreeToTerms = value ?? false;
-                              });
-                            },
-                          ),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 12),
-                              child: Text.rich(
-                                TextSpan(
-                                  text: 'I agree to the ',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 14,
-                                    color: Colors.grey[800],
-                                  ),
-                                  children: [
-                                    TextSpan(
-                                      text: 'Terms & Conditions',
-                                      style: GoogleFonts.poppins(
-                                        color: const Color(0xFFB39DDB),
-                                        fontWeight: FontWeight.w600,
-                                        decoration: TextDecoration.underline,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      _isLoading
-                          ? const CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFB39DDB)),
-                            )
-                          : SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: _signup,
-                                style: ElevatedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  backgroundColor: const Color(0xFFB39DDB),
-                                  foregroundColor: Colors.white,
-                                  elevation: 5,
-                                  shadowColor: Colors.black.withOpacity(0.3),
-                                ),
-                                child: Text(
-                                  "CREATE ACCOUNT",
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.0,
-                                  ),
-                                ),
-                              ),
-                            ),
-                      const SizedBox(height: 16),
-                      Center(
-                        child: TextButton(
-                          onPressed: () {
-                            Navigator.pushNamed(context, '/login');
-                          },
-                          child: Text(
-                            "Already have an account? Sign In",
-                            style: GoogleFonts.poppins(
-                              color: const Color(0xFFB39DDB),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _usernameController.dispose();
+    super.dispose();
   }
 }

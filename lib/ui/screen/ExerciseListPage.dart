@@ -1,112 +1,178 @@
 import 'package:flutter/material.dart';
-import 'package:fitness_app/utils/exercise_data.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../../utils/exercise_data.dart';
 import 'ARWorkoutPage.dart';
 import 'standard_workout_page.dart';
 
-class ExerciseListPage extends StatefulWidget {
-  final String workoutType;
+class ExerciseListPage extends StatelessWidget {
+  final String category;
 
-  const ExerciseListPage({Key? key, required this.workoutType}) : super(key: key);
+  const ExerciseListPage({Key? key, required this.category}) : super(key: key);
 
-  @override
-  _ExerciseListPageState createState() => _ExerciseListPageState();
-}
+  void _showModeSelectionDialog(BuildContext context, Map<String, dynamic> exercise) {
+    final exerciseName = exercise['name'] ?? 'Unknown';
+    final duration = exercise['duration'] ?? '30s';
+    final targetReps = int.tryParse(exercise['targetReps']?.toString() ?? '10') ?? 10;
+    final targetDuration = double.tryParse(duration.replaceAll('s', '')) ?? 40.0;
 
-class _ExerciseListPageState extends State<ExerciseListPage> {
-  void _navigateToWorkout(String exerciseName, bool isArMode) {
-    final arType = ExerciseData.getArType(exerciseName, widget.workoutType);
-    Widget nextPage;
-
-    if (isArMode && arType.isNotEmpty) {
-      nextPage = ARWorkoutPage(
-        workoutType: arType,
-        workoutCategory: widget.workoutType,
-        targetReps: widget.workoutType == 'Yoga' ? 20 : 10,
-      );
-    } else {
-      nextPage = StandardWorkoutPage(
-        workoutType: widget.workoutType,
-        initialExercise: exerciseName,
-      );
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => nextPage),
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.black.withOpacity(0.8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Choose Mode for $exerciseName',
+          style: GoogleFonts.poppins(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ElevatedButton(
+              onPressed: () {
+                print('Navigating to ARWorkoutPage: exercise=$exerciseName, category=$category');
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ARWorkoutPage(
+                      workoutType: category,
+                      workoutCategory: category,
+                      initialExercise: exerciseName,
+                      targetReps: targetReps,
+                      targetDuration: targetDuration,
+                    ),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFB39DDB),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(
+                'AR Mode 🚀',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: () {
+                print('Navigating to StandardWorkoutPage: exercise=$exerciseName, category=$category');
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => StandardWorkoutPage(
+                      workoutType: exerciseName,
+                      workoutCategory: category,
+                      targetReps: targetReps,
+                      targetDuration: targetDuration,
+                      initialExercise: exerciseName,
+                    ),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFB39DDB),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(
+                'Standard Mode 🎥',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final exercises = ExerciseData.exercises[widget.workoutType] ?? [];
+    final exercises = ExerciseData.exercises[category] ?? [];
+    print('ExerciseListPage: Category: $category, Exercises: $exercises');
 
     return Scaffold(
-      backgroundColor: Colors.black,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFB39DDB),
         title: Text(
-          "${widget.workoutType} Exercises",
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          '$category Exercises',
+          style: GoogleFonts.poppins(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
-        centerTitle: true,
+        backgroundColor: const Color(0xFFB39DDB),
       ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Color(0xFFB39DDB)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
+            colors: [Colors.black, Color(0xFFB39DDB)],
           ),
         ),
-        child: ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: exercises.length,
-          itemBuilder: (context, index) {
-            final exercise = exercises[index];
-            final arType = exercise['arType'] ?? '';
-            return Card(
-              color: const Color(0xFF1E1E2C),
-              margin: const EdgeInsets.symmetric(vertical: 8),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: ListTile(
-                leading: Image.asset(
-                  'assets/icons/${exercise['name']!.toLowerCase().replaceAll(' ', '_')}.png',
-                  width: 40,
-                  height: 40,
-                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.fitness_center, color: Colors.white),
+        child: exercises.isEmpty
+            ? Center(
+                child: Text(
+                  'No exercises found for $category 😢',
+                  style: GoogleFonts.poppins(
+                    fontSize: 20,
+                    color: Colors.white70,
+                  ),
                 ),
-                title: Text(
-                  exercise['name']!,
-                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  exercise['duration'] ?? exercise['reps'] ?? 'N/A',
-                  style: const TextStyle(color: Colors.grey),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        Icons.videocam,
-                        color: arType.isEmpty ? Colors.grey : Colors.white,
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: exercises.length,
+                itemBuilder: (context, index) {
+                  final exercise = exercises[index];
+                  final exerciseName = exercise['name'] ?? 'Unknown';
+                  final duration = exercise['duration'] ?? '30s';
+
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 8),
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: Color(0xFFB39DDB), width: 1),
+                    ),
+                    color: Colors.white.withOpacity(0.95),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(16),
+                      title: Text(
+                        exerciseName,
+                        style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
                       ),
-                      onPressed: arType.isEmpty
-                          ? null
-                          : () => _navigateToWorkout(exercise['name']!, true),
-                      tooltip: 'AR Mode',
+                      subtitle: Text(
+                        'Duration: $duration',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      onTap: () => _showModeSelectionDialog(context, exercise),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.play_arrow, color: Colors.white),
-                      onPressed: () => _navigateToWorkout(exercise['name']!, false),
-                      tooltip: 'Standard Mode',
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
-            );
-          },
-        ),
       ),
     );
   }
